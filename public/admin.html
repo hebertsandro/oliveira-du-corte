@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#090909">
+  <title>Painel ADM | Oliveira Du Corte</title>
+  <style>
+    :root{--bg:#090909;--card:#151515;--line:#292929;--text:#fff;--muted:#999;--accent:#d8a94b}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,Helvetica,sans-serif}
+    .container{width:min(1150px,94%);margin:auto}.top{border-bottom:1px solid var(--line);padding:22px 0}.topbar{display:flex;justify-content:space-between;align-items:center;gap:15px}.logo{font-weight:900}.logo span{color:var(--accent)}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;margin:25px 0}.login{max-width:430px;margin:100px auto}
+    input,select{width:100%;background:#0d0d0d;color:#fff;border:1px solid var(--line);border-radius:9px;padding:13px;font-size:16px}.field{margin-bottom:15px}.field label{display:block;font-size:13px;font-weight:bold;margin-bottom:7px}
+    button{border:0;border-radius:9px;padding:12px 15px;font-weight:bold;cursor:pointer}.primary{background:var(--accent);color:#111}.secondary{background:#252525;color:#fff}
+    .filters{display:grid;grid-template-columns:1fr 1fr auto;gap:12px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:850px}th,td{padding:13px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}th{color:var(--muted);font-size:12px;text-transform:uppercase}
+    .badge{display:inline-block;padding:5px 8px;border-radius:999px;font-size:11px;font-weight:bold}.confirmed{background:#14351f;color:#9df0b1}.completed{background:#1d2d40;color:#a8d4ff}.cancelled{background:#351616;color:#ffaaaa}
+    .actions{display:flex;gap:7px;flex-wrap:wrap}.empty{color:var(--muted);text-align:center;padding:30px}.error{background:#351616;color:#ffb0b0;padding:12px;border-radius:9px;display:none;margin-bottom:15px}
+    @media(max-width:650px){.filters{grid-template-columns:1fr}.topbar{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body>
+<div id="loginScreen" class="container">
+  <div class="card login">
+    <h1>Painel ADM</h1>
+    <p style="color:#999">Oliveira Du Corte</p>
+    <div id="loginError" class="error"></div>
+    <div class="field">
+      <label>Senha do administrador</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="Digite sua senha">
+    </div>
+    <button id="loginBtn" class="primary" style="width:100%">ENTRAR</button>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+  <div class="top">
+    <div class="container topbar">
+      <div class="logo">OLIVEIRA <span>DU CORTE</span> — ADM</div>
+      <button id="logout" class="secondary">Sair</button>
+    </div>
+  </div>
+
+  <main class="container">
+    <div class="card">
+      <h2>Agendamentos</h2>
+      <div id="error" class="error"></div>
+      <div class="filters">
+        <div class="field">
+          <label>Data</label>
+          <input id="filterDate" type="date">
+        </div>
+        <div class="field">
+          <label>Status</label>
+          <select id="filterStatus">
+            <option value="">Todos</option>
+            <option value="confirmed">Confirmados</option>
+            <option value="completed">Concluídos</option>
+            <option value="cancelled">Cancelados</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:end;padding-bottom:15px">
+          <button id="today" class="secondary">Hoje</button>
+        </div>
+      </div>
+      <button id="refresh" class="primary">Atualizar</button>
+    </div>
+
+    <div class="card">
+      <div id="tableWrap" class="table-wrap"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+  let token = sessionStorage.getItem("oliveira_admin_token") || "";
+
+  const $ = id => document.getElementById(id);
+
+  function today() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  }
+
+  function money(v) {
+    return Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+  }
+
+  function escapeHtml(v) {
+    return String(v ?? "").replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[c]));
+  }
+
+  function statusLabel(s) {
+    return s === "confirmed" ? "Confirmado" : s === "completed" ? "Concluído" : "Cancelado";
+  }
+
+  function showError(el, text) {
+    el.textContent = text;
+    el.style.display = "block";
+  }
+
+  async function api(url, options={}) {
+    const headers = {...(options.headers || {}), Authorization:`Bearer ${token}`};
+    const r = await fetch(url,{...options,headers});
+    const data = await r.json().catch(()=>({}));
+    if (r.status === 401) {
+      logout();
+      throw new Error("Sessão expirada.");
+    }
+    if (!r.ok) throw new Error(data.error || "Erro.");
+    return data;
+  }
+
+  async function load() {
+    $("error").style.display = "none";
+    $("tableWrap").innerHTML = `<div class="empty">Carregando...</div>`;
+
+    const params = new URLSearchParams();
+    if ($("filterDate").value) params.set("date",$("filterDate").value);
+    if ($("filterStatus").value) params.set("status",$("filterStatus").value);
+
+    try {
+      const rows = await api(`/api/admin/appointments?${params}`);
+      if (!rows.length) {
+        $("tableWrap").innerHTML = `<div class="empty">Nenhum agendamento encontrado.</div>`;
+        return;
+      }
+
+      $("tableWrap").innerHTML = `
+        <table>
+          <thead><tr>
+            <th>Data</th><th>Horário</th><th>Cliente</th><th>Telefone</th>
+            <th>Serviço</th><th>Valor</th><th>Status</th><th>Ações</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(a => `
+              <tr>
+                <td>${a.appointment_date.split("-").reverse().join("/")}</td>
+                <td><strong>${escapeHtml(a.appointment_time)}</strong></td>
+                <td>${escapeHtml(a.customer_name)}${a.notes ? `<br><small style="color:#999">📝 ${escapeHtml(a.notes)}</small>` : ""}</td>
+                <td>${escapeHtml(a.customer_phone)}</td>
+                <td>${escapeHtml(a.service_name)}</td>
+                <td>${money(a.service_price)}</td>
+                <td><span class="badge ${a.status}">${statusLabel(a.status)}</span></td>
+                <td>
+                  <div class="actions">
+                    ${a.status !== "confirmed" ? `<button class="secondary" onclick="changeStatus(${a.id},'confirmed')">Confirmar</button>` : ""}
+                    ${a.status !== "completed" ? `<button class="secondary" onclick="changeStatus(${a.id},'completed')">Concluir</button>` : ""}
+                    ${a.status !== "cancelled" ? `<button class="secondary" onclick="changeStatus(${a.id},'cancelled')">Cancelar</button>` : ""}
+                    <button class="secondary" onclick="removeAppointment(${a.id})">Excluir</button>
+                  </div>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    } catch(e) {
+      showError($("error"), e.message);
+    }
+  }
+
+  async function changeStatus(id,status) {
+    try {
+      await api(`/api/admin/appointments/${id}/status`,{
+        method:"PATCH",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({status})
+      });
+      load();
+    } catch(e) { showError($("error"),e.message); }
+  }
+
+  async function removeAppointment(id) {
+    if (!confirm("Excluir este agendamento definitivamente?")) return;
+    try {
+      await api(`/api/admin/appointments/${id}`,{method:"DELETE"});
+      load();
+    } catch(e) { showError($("error"),e.message); }
+  }
+
+  window.changeStatus = changeStatus;
+  window.removeAppointment = removeAppointment;
+
+  function openApp() {
+    $("loginScreen").style.display = "none";
+    $("app").style.display = "block";
+    load();
+  }
+
+  function logout() {
+    sessionStorage.removeItem("oliveira_admin_token");
+    token = "";
+    $("app").style.display = "none";
+    $("loginScreen").style.display = "block";
+  }
+
+  $("loginBtn").addEventListener("click", () => {
+    const p = $("password").value;
+    if (!p) return showError($("loginError"),"Digite a senha.");
+    token = p;
+    sessionStorage.setItem("oliveira_admin_token",token);
+    $("password").value = "";
+    openApp();
+  });
+
+  $("password").addEventListener("keydown",e => {
+    if(e.key==="Enter") $("loginBtn").click();
+  });
+
+  $("logout").addEventListener("click",logout);
+  $("refresh").addEventListener("click",load);
+  $("filterDate").addEventListener("change",load);
+  $("filterStatus").addEventListener("change",load);
+  $("today").addEventListener("click",()=>{$("filterDate").value=today();load()});
+
+  $("filterDate").value = today();
+
+  if (token) openApp();
+</script>
+</body>
+</html>
