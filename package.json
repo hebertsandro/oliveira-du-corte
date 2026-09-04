@@ -1,0 +1,18 @@
+{
+  "name": "oliveira-du-corte",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema real de agendamento da barbearia Oliveira Du Corte",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.16.3"
+  }
+}
